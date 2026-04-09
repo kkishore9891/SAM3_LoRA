@@ -857,16 +857,18 @@ class SAM3TrainerNative:
             ),
         ]
         if use_mask_loss:
+            mask_weight = self.config["training"].get("mask_loss_weight", 200.0)
+            dice_weight = self.config["training"].get("dice_loss_weight", 10.0)
             loss_fns.append(Masks(
                 weight_dict={
-                    "loss_mask": 200.0,
-                    "loss_dice": 10.0
+                    "loss_mask": mask_weight,
+                    "loss_dice": dice_weight
                 },
                 focal_alpha=0.25,
                 focal_gamma=2.0,
                 compute_aux=False
             ))
-            print("Loss: Boxes + IABCE + Masks")
+            print(f"Loss: Boxes + IABCE + Masks (mask={mask_weight}, dice={dice_weight})")
         else:
             print("Loss: Boxes + IABCE (mask loss DISABLED)")
 
