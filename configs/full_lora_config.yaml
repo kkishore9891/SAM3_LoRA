@@ -85,6 +85,7 @@ training:
   mixed_precision: "bf16"    # Use bfloat16 if available
   seed: 42
   gradient_accumulation_steps: 8  # Reduced from 16 (effective batch: 2×8=16)
+  use_mask_loss: true  # Set false for bbox-only supervision (disables Masks loss)
 
 output:
   output_dir: "outputs/sam3_lora_full"

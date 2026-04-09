@@ -837,7 +837,7 @@ class SAM3TrainerNative:
         )
 
         # Create loss functions with correct weights (from original SAM3 training config)
-        # Note: These weights are for mask-based training
+        use_mask_loss = self.config["training"].get("use_mask_loss", True)
         loss_fns = [
             Boxes(weight_dict={
                 "loss_bbox": 5.0,
@@ -855,16 +855,20 @@ class SAM3TrainerNative:
                 use_presence=True,
                 pad_n_queries=200,
             ),
-            Masks(
+        ]
+        if use_mask_loss:
+            loss_fns.append(Masks(
                 weight_dict={
-                    "loss_mask": 200.0,  # Much higher weight for mask loss!
+                    "loss_mask": 200.0,
                     "loss_dice": 10.0
                 },
                 focal_alpha=0.25,
                 focal_gamma=2.0,
                 compute_aux=False
-            )
-        ]
+            ))
+            print("Loss: Boxes + IABCE + Masks")
+        else:
+            print("Loss: Boxes + IABCE (mask loss DISABLED)")
 
         # Create one-to-many matcher for auxiliary outputs
         o2m_matcher = BinaryOneToManyMatcher(
