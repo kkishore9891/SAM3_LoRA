@@ -49,7 +49,7 @@ from sam3.train.matcher import BinaryHungarianMatcherV2, BinaryOneToManyMatcher
 from sam3.train.data.collator import collate_fn_api
 from sam3.train.data.sam3_image_dataset import Datapoint, Image, Object, FindQueryLoaded, InferenceMetadata
 from sam3.model.box_ops import box_xywh_to_xyxy
-from lora_layers import LoRAConfig, apply_lora_to_model, save_lora_weights, count_parameters
+from lora_layers import LoRAConfig, apply_lora_to_model, save_lora_weights, load_lora_weights, count_parameters
 
 from torchvision.transforms import v2
 import pycocotools.mask as mask_utils  # Required for RLE mask decoding in COCO dataset
@@ -806,6 +806,15 @@ class SAM3TrainerNative:
         )
         self.model = apply_lora_to_model(self.model, lora_config)
 
+        # Resume from existing checkpoint if present in output_dir
+        resume_dir = Path(self.config["output"]["output_dir"])
+        for ckpt_name in ("best_lora_weights.pt", "last_lora_weights.pt"):
+            ckpt_path = resume_dir / ckpt_name
+            if ckpt_path.exists():
+                print_rank0(f"Resuming from existing checkpoint: {ckpt_path}")
+                load_lora_weights(self.model, str(ckpt_path))
+                break
+
         stats = count_parameters(self.model)
         print_rank0(f"Trainable params: {stats['trainable_parameters']:,} ({stats['trainable_percentage']:.2f}%)")
 
@@ -963,6 +972,23 @@ class SAM3TrainerNative:
         else:
             val_loader = None
 
+        # Initialize wandb if available
+        self._wandb = None
+        wandb_project = self.config.get("wandb", {}).get("project", "drywall-qa")
+        wandb_enabled = self.config.get("wandb", {}).get("enabled", True)
+        if wandb_enabled and is_main_process():
+            try:
+                import wandb
+                run_name = Path(self.config["output"]["output_dir"]).name
+                self._wandb = wandb.init(
+                    project=wandb_project,
+                    name=run_name,
+                    config=self.config,
+                )
+                print(f"wandb initialized: {wandb.run.url}")
+            except Exception as e:
+                print(f"wandb init failed (continuing without): {e}")
+
         self.model.train()
 
         # Weights from a standard SAM config roughly
@@ -1068,8 +1094,12 @@ class SAM3TrainerNative:
                 self.optimizer.step()
 
                 # Track training loss
-                train_losses.append(total_loss.item())
-                pbar.set_postfix({"loss": total_loss.item()})
+                step_loss = total_loss.item()
+                train_losses.append(step_loss)
+                pbar.set_postfix({"loss": step_loss})
+
+                if self._wandb:
+                    self._wandb.log({"train/step_loss": step_loss})
 
             # Calculate average training loss for this epoch
             avg_train_loss = sum(train_losses) / len(train_losses) if train_losses else 0.0
@@ -1126,6 +1156,13 @@ class SAM3TrainerNative:
                     avg_val_loss = val_loss_tensor.item()
 
                 print_rank0(f"\nEpoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
+
+                if self._wandb:
+                    self._wandb.log({
+                        "epoch": epoch + 1,
+                        "train/epoch_loss": avg_train_loss,
+                        "val/epoch_loss": avg_val_loss,
+                    })
 
                 # Save models based on validation loss (only on rank 0)
                 if is_main_process():
@@ -1192,6 +1229,10 @@ class SAM3TrainerNative:
                 print(f"  - last_lora_weights.pt (last epoch)")
                 print(f"\nℹ️  No validation data - consider adding data/valid/ for better model selection")
                 print(f"{'='*80}")
+
+        # Finish wandb
+        if self._wandb:
+            self._wandb.finish()
 
         # Cleanup distributed training
         if self.multi_gpu:

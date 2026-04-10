@@ -495,12 +495,23 @@ def create_coco_gt_from_dataset(dataset, image_ids=None, mask_resolution=288):
     indices = range(len(dataset)) if image_ids is None else image_ids
 
     for idx in tqdm(list(indices), desc="Creating GT"):
-        coco_gt['images'].append({
+        # Try to get original filename for visualization
+        filename = None
+        try:
+            orig_img_id = dataset.image_ids[idx]
+            filename = dataset.images[orig_img_id].get('file_name')
+        except (AttributeError, IndexError, KeyError):
+            pass
+
+        img_entry = {
             'id': int(idx),
             'width': mask_resolution,
             'height': mask_resolution,
             'is_instance_exhaustive': True
-        })
+        }
+        if filename:
+            img_entry['file_name'] = filename
+        coco_gt['images'].append(img_entry)
 
         datapoint = dataset[idx]
 
@@ -1089,6 +1100,15 @@ def validate(config_path, weights_path, val_data_dir, num_samples=None,
         print(f"cgF1@50: {cgf1_50:.4f}")
         print(f"cgF1@75: {cgf1_75:.4f}")
         print("="*80)
+
+        # Optionally save predictions+GT to a persistent location before cleanup
+        save_preds_to = os.environ.get("SAVE_PREDICTIONS_TO")
+        if save_preds_to:
+            import shutil as _shutil
+            os.makedirs(save_preds_to, exist_ok=True)
+            _shutil.copy2(gt_file, os.path.join(save_preds_to, "gt.json"))
+            _shutil.copy2(pred_file, os.path.join(save_preds_to, "pred.json"))
+            print(f"Saved gt.json + pred.json to {save_preds_to}")
 
         # Cleanup temporary files
         import shutil
